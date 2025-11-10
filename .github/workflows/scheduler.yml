@@ -1,0 +1,38 @@
+name: Social Scheduler
+
+on:
+  schedule:
+    - cron: "0 17 * * *"   # 10:30 PM IST daily → run main.py
+    - cron: "*/30 * * * *" # every 30 mins → check IG containers
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pytz
+
+      - name: Run scheduler
+        if: github.event.schedule == '0 17 * * *'
+        run: python main.py
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+
+      - name: Run IG publisher
+        if: github.event.schedule == '*/30 * * * *'
+        run: python publish_ig_post.py
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
