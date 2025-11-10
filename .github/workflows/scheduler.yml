@@ -1,14 +1,16 @@
-name: Social Scheduler
+name: Instagram Scheduler
 
+# 👇 This tells GitHub WHEN to run the workflow
 on:
   schedule:
-    - cron: "0 17 * * *"   # 10:30 PM IST daily → run main.py
-    - cron: "*/30 * * * *" # every 30 mins → check IG containers
-  workflow_dispatch:
+    - cron: "0 17 * * *"   # runs main.py daily (~10:30 PM IST)
+    - cron: "*/30 * * * *" # runs publish_ig_post.py every 30 minutes
+  workflow_dispatch:       # lets you trigger it manually
 
 jobs:
-  run:
+  scheduler:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -21,18 +23,20 @@ jobs:
       - name: Install dependencies
         run: pip install requests pytz
 
-      - name: Run scheduler
+      # 🧱 This runs once daily at 10:30 PM IST to create IG containers
+      - name: Create IG containers
         if: github.event.schedule == '0 17 * * *'
         run: python main.py
         env:
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          API_BASE: ${{ secrets.API_BASE }}
 
-      - name: Run IG publisher
+      # 🕒 This runs every 30 min to check/publish posts
+      - name: Publish IG posts
         if: github.event.schedule == '*/30 * * * *'
         run: python publish_ig_post.py
         env:
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          API_BASE: ${{ secrets.API_BASE }}
