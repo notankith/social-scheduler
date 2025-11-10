@@ -4,79 +4,106 @@ import pytz
 import json
 import os
 
-ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
-PAGE_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN")
-PAGE_ID = os.getenv("FB_PAGE_ID")
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 IG_USER_ID = os.getenv("IG_USER_ID")
-API_BASE = "https://graph.facebook.com/v21.0"
+API_BASE = os.getenv("API_BASE", "https://graph.facebook.com/v21.0")
 
-with open("posts.json", "r") as f:
-    posts = json.load(f)
+IST = pytz.timezone("Asia/Kolkata")
 
-ist = pytz.timezone("Asia/Kolkata")
+STATUS_FILE = "scheduler_status.txt"
 
-def schedule_facebook_post(image_url, caption, schedule_time):
-    print(f"📘 Scheduling FB post for {schedule_time}")
-    utc_time = ist.localize(schedule_time).astimezone(pytz.utc)
-    ts = int(utc_time.timestamp())
+def log_status(message):
+    timestamp = datetime.datetime.now(IST).strftime("[%Y-%m-%d %H:%M:%S]")
+    print(f"{timestamp} {message}")
+    with open(STATUS_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{timestamp} {message}\n")
 
-    res = requests.post(
-        f"{API_BASE}/{PAGE_ID}/photos",
-        params={
-            "url": image_url,
-            "caption": caption,
-            "published": "false",
-            "scheduled_publish_time": ts,
-            "access_token": PAGE_ACCESS_TOKEN,
-        },
-    )
-    print("FB Response:", res.json())
-
-def create_instagram_container(image_url, caption):
-    print("📸 Creating IG container...")
+def create_instagram_container(media_url, caption):
     res = requests.post(
         f"{API_BASE}/{IG_USER_ID}/media",
         params={
-            "image_url": image_url,
+            "image_url": media_url,
             "caption": caption,
             "access_token": ACCESS_TOKEN,
         },
     )
     data = res.json()
     if "id" in data:
-        print(f"✅ IG container created: {data['id']}")
-        return data["id"]
+        cid = data["id"]
+        log_status(f"✅ Created container {cid} for caption start: {caption[:40]}...")
+        return cid
     else:
-        print("❌ Failed IG container:", data)
+        log_status(f"❌ Failed to create container: {data}")
         return None
 
+def publish_container(cid):
+    res = requests.post(
+        f"{API_BASE}/{IG_USER_ID}/media_publish",
+        params={
+            "creation_id": cid,
+            "access_token": ACCESS_TOKEN,
+        },
+    )
+    data = res.json()
+    if "id" in data:
+        log_status(f"🚀 Published IG post successfully → Post ID {data['id']}")
+        return True
+    else:
+        log_status(f"⚠️ Failed to publish container {cid}: {data}")
+        return False
+
 def main():
-    now = datetime.datetime.now(ist)
+    now = datetime.datetime.now(IST)
+    log_status("==== SCHEDULER RUN STARTED ====")
+
+    # load existing pending list
+    pending_path = "pending_ig.json"
+    if os.path.exists(pending_path):
+        with open(pending_path, "r") as f:
+            pending = json.load(f)
+    else:
+        pending = []
+
+    # load new posts
+    with open("posts.json", "r") as f:
+        posts = json.load(f)
+
+    # create new containers for today's posts if not already pending
     for post in posts:
         if not post.get("selected", False):
             continue
 
         time_str = post["time"]
-        schedule_time = now.replace(
-            hour=int(time_str.split(":")[0]),
-            minute=int(time_str.split(":")[1]),
-            second=0,
-            microsecond=0,
-        )
-        if schedule_time < now:
-            schedule_time += datetime.timedelta(days=1)
+        hour, minute = map(int, time_str.split(":"))
+        scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if scheduled_time < now:
+            scheduled_time += datetime.timedelta(days=1)
 
-        image = post["media_url"]
-        caption = post["description"]
+        # check if already queued
+        if any(p["id"] == post["id"] for p in pending):
+            continue
 
-        # Facebook schedules natively
-        schedule_facebook_post(image, caption, schedule_time)
+        container_id = create_instagram_container(post["media_url"], post["description"])
+        if container_id:
+            pending.append({
+                "id": post["id"],
+                "container_id": container_id,
+                "time": time_str,
+                "status": "queued"
+            })
 
-        # Create IG container (for cron job)
-        ig_container = create_instagram_container(image, caption)
-        if ig_container:
-            with open("pending_ig.txt", "a") as f:
-                f.write(f"{schedule_time.strftime('%H:%M')}|{ig_container}\n")
+    # check and publish due posts
+    current_time = now.strftime("%H:%M")
+    for p in pending:
+        if p["status"] == "queued" and p["time"] == current_time:
+            ok = publish_container(p["container_id"])
+            p["status"] = "posted" if ok else "failed"
+
+    # save pending list
+    with open(pending_path, "w") as f:
+        json.dump(pending, f, indent=2)
+
+    log_status("==== SCHEDULER RUN COMPLETE ====\n")
 
 if __name__ == "__main__":
     main()
